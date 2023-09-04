@@ -1,11 +1,12 @@
 import argparse
-import matplotlib.pyplot as plt
+import os
 
 import carla
+import matplotlib.pyplot as plt
 import numpy as np
 import pygame
 
-from birdeye_render import BirdeyeRender
+import birdeye_render
 
 
 class BEVGenerator:
@@ -21,7 +22,7 @@ class BEVGenerator:
             'pixels_per_meter': 8,
             'pixels_ahead_vehicle': 8 * (32/2 - 12) # (obs_range/2 - self.d_behind) * pixels_per_meter
         }
-        self.birdeye_render = BirdeyeRender(self.world, birdeye_params)
+        self.birdeye_render = birdeye_render.BirdeyeRender(self.world, birdeye_params)
         self.birdeye_render.set_hero(self.ego, self.ego.id)
         
         self.vehicle_polygons = []
@@ -31,7 +32,7 @@ class BEVGenerator:
     def __del__(self):
         pygame.quit()
     
-    def _generate_road_waypoints(self):
+    def _generate_road_waypoints(self, precision=0.5):
         """Return all, precisely located waypoints from the map.
 
         Topology contains simplified representation (a start and an end
@@ -40,35 +41,41 @@ class BEVGenerator:
 
         Returns a list of waypoints for each road segment.
         """
-        precision = 0.05
-        road_segments_starts: carla.Waypoint = [
-            road_start for road_start, road_end in self.map.get_topology()
-        ]
-        
-        def extract_waypoint(wpt):
-            return (wpt.transform.location.x, wpt.transform.location.y, wpt.transform.rotation.yaw)
+        cache_file = os.path.join(os.path.dirname(birdeye_render.__file__), f"birdeye_cache/{self.map.name.split('/')[-1]}_{precision}.npy")
+        if os.path.exists(cache_file):
+            return np.load(cache_file, allow_pickle=True)
+        else:
+            road_segments_starts: carla.Waypoint = [
+                road_start for road_start, road_end in self.map.get_topology()
+            ]
+            
+            def extract_waypoint(wpt):
+                return (wpt.transform.location.x, wpt.transform.location.y, wpt.transform.rotation.yaw)
 
-        each_road_waypoints = []
-        for road_start_waypoint in road_segments_starts:
-            road_waypoints = [extract_waypoint(road_start_waypoint)]
+            each_road_waypoints = []
+            for road_start_waypoint in road_segments_starts:
+                road_waypoints = [extract_waypoint(road_start_waypoint)]
 
-            # Generate as long as it's the same road
-            next_waypoints = road_start_waypoint.next(precision)
+                # Generate as long as it's the same road
+                next_waypoints = road_start_waypoint.next(precision)
 
-            if len(next_waypoints) > 0:
-                # Always take first (may be at intersection)
-                next_waypoint = next_waypoints[0]
-                while next_waypoint.road_id == road_start_waypoint.road_id:
-                    road_waypoints.append(extract_waypoint(next_waypoint))
-                    next_waypoint = next_waypoint.next(precision)
+                if len(next_waypoints) > 0:
+                    # Always take first (may be at intersection)
+                    next_waypoint = next_waypoints[0]
+                    while next_waypoint.road_id == road_start_waypoint.road_id:
+                        road_waypoints.append(extract_waypoint(next_waypoint))
+                        next_waypoint = next_waypoint.next(precision)
 
-                    if len(next_waypoint) > 0:
-                        next_waypoint = next_waypoint[0]
-                    else:
-                        # Reached the end of road segment
-                        break
-            each_road_waypoints.append(road_waypoints)
-        return each_road_waypoints
+                        if len(next_waypoint) > 0:
+                            next_waypoint = next_waypoint[0]
+                        else:
+                            # Reached the end of road segment
+                            break
+                each_road_waypoints.append(road_waypoints)
+            
+            each_road_waypoints = np.array(each_road_waypoints)
+            np.save(cache_file, each_road_waypoints)
+            return each_road_waypoints
     
     def render(self):
         # Append actors polygon list

@@ -45,7 +45,7 @@ class BEVGenerator:
         if os.path.exists(cache_file):
             return np.load(cache_file, allow_pickle=True)
         else:
-            road_segments_starts: carla.Waypoint = [
+            road_segments_starts = [
                 road_start for road_start, road_end in self.map.get_topology()
             ]
             
